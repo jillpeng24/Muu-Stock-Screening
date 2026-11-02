@@ -40,12 +40,12 @@ def build_message(today, light, picks, card, due_today):
         for i, (_, p) in enumerate(top.iterrows(), 1):
             star = " ⭐" if p.get("strong") else ""
             lines.append(f"{i}. {p['stock_id']} {p['name']}{star}")
-            px = f"約 {p['close']:.1f} 元" if p.get("close") else ""
+            px = f"{p['close']:.1f} 元" if p.get("close") else ""
             if red:
-                lines.append(f"   👀 觀察就好，先不要買（今日收盤 {px.replace('約 ', '')}）")
+                lines.append(f"   👀 觀察就好，先不要買（今日收盤 {px}）")
             else:
                 half = {0.5: "（金額減半）", 0.25: "（金額 1/4）"}.get(round(float(p["size"]), 2), "")
-                lines.append(f"   👉 明天可買{half}，參考價{px}")
+                lines.append(f"   👉 明天可買{half}，今日收盤 {px}" if px else f"   👉 明天可買{half}")
                 lines.append(f"   ⏰ 抱到約 {review} 再檢視")
             info = [f"投信連買 {int(p['trust_days'])} 天"]
             if p.get("foreign_together"):
