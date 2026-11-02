@@ -47,7 +47,7 @@ def build_message(today, light, picks, card, due_today):
                 half = {0.5: "（金額減半）", 0.25: "（金額 1/4）"}.get(round(float(p["size"]), 2), "")
                 lines.append(f"   👉 明天可買{half}，今日收盤 {px}" if px else f"   👉 明天可買{half}")
                 lines.append(f"   ⏰ 抱到約 {review} 再檢視")
-            info = [f"投信連買 {int(p['trust_days'])} 天"]
+            info = [f"投信連買 {int(p['trust_days'])} 天、近 5 日買超佔成交量 {p['trust5_ratio'] * 100:.0f}%"]
             if p.get("foreign_together"):
                 info.append(f"外資同步買 {int(p['foreign_days'])} 天")
             if p.get("rev_yoy") is not None and p.get("rev_yoy") == p.get("rev_yoy"):
@@ -72,6 +72,8 @@ def build_message(today, light, picks, card, due_today):
         lines.append(f"🔍 觀察名單 {n_watch} 檔、K 線圖 👉 {config.WEBSITE_URL}")
     elif n_watch:
         lines.append(f"🔍 另有觀察名單 {n_watch} 檔")
+    if top is not None and not top.empty and top["strong"].fillna(False).astype(bool).any():
+        lines.append("⭐ 投信買超特別多")
     lines.append("※ 僅供參考，請自行判斷")
     return "\n".join(lines).strip()
 
