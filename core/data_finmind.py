@@ -99,10 +99,18 @@ def get_fundamentals(sid, today):
             c["cf"] = _quarterly_from_ytd([r for r in cf if r.get("type") == "CashFlowsFromOperatingActivities"])
             c["q_fetched"] = today_s
     _save(sid, c)
-    return summarize(c)
+    return summarize(c, sid)
 
 
-def summarize(c):
+# 金融股（銀行、保險、證券）：存放款、投資買賣都算在營業活動裡，營業現金流正負不代表經營好壞，不檢查
+FINANCE_EXTRA = {"5876", "5880", "6005", "6024"}
+
+
+def is_finance(sid):
+    return sid.startswith("28") or sid in FINANCE_EXTRA
+
+
+def summarize(c, sid=""):
     out = {"rev_yoy": None, "rev_label": "", "eps4": None, "cf_ttm": None, "ok": None, "reason": ""}
     rev = c.get("revenue", [])
     if len(rev) >= 13:
@@ -121,7 +129,7 @@ def summarize(c):
         out["ok"], out["reason"] = None, "基本面資料不足"
     elif min(out["eps4"]) <= 0:
         out["ok"], out["reason"] = False, "近 4 季有虧損"
-    elif out["cf_ttm"] <= 0:
+    elif out["cf_ttm"] <= 0 and not is_finance(sid):
         out["ok"], out["reason"] = False, "營業現金流為負"
     else:
         out["ok"] = True

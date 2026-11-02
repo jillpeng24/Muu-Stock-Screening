@@ -44,7 +44,7 @@ def build_message(today, light, picks, card, due_today):
             if red:
                 lines.append(f"   👀 觀察就好，先不要買（今日收盤 {px.replace('約 ', '')}）")
             else:
-                half = "（金額減半）" if p["size"] < 1 else ""
+                half = {0.5: "（金額減半）", 0.25: "（金額 1/4）"}.get(round(float(p["size"]), 2), "")
                 lines.append(f"   👉 明天可買{half}，參考價{px}")
                 lines.append(f"   ⏰ 抱到約 {review} 再檢視")
             info = [f"投信連買 {int(p['trust_days'])} 天"]
