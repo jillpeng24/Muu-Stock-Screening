@@ -1,0 +1,54 @@
+name: 每日選股
+
+on:
+  schedule:
+    # 台北時間 14:32（週一至週五）。GitHub 免費排程常會延遲。
+    # 如果啟動時證交所資料還沒公布，程式會每 10 分鐘再檢查一次，最多等到 17:00。
+    - cron: '32 6 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只預覽 LINE 訊息、不發送（1 = 預覽）'
+        default: '1'
+      force:
+        description: '今天已經跑過也重跑（1 = 重跑）'
+        default: '0'
+
+concurrency:
+  group: daily-run
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安裝套件
+        run: pip install -r requirements.txt
+
+      - name: 執行每日選股
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          WEBSITE_URL: ${{ vars.WEBSITE_URL }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          FORCE: ${{ github.event.inputs.force || '0' }}
+        run: python -u run_daily.py
+
+      - name: 存檔回 GitHub
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add -A data/
+          git commit -m "每日選股 $(TZ=Asia/Taipei date +'%Y-%m-%d')" || exit 0
+          git pull --rebase origin main || true
+          git push
