@@ -45,7 +45,7 @@ jobs:
         run: |
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
-          git add -A data/
+          git add -A data/ docs/
           git commit -m "每日選股 $(TZ=Asia/Taipei date +'%Y-%m-%d')" || exit 0
           git pull --rebase origin main || true
           git push
