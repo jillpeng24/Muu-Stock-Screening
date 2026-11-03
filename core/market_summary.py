@@ -102,9 +102,10 @@ def industry_map(today):
 
 
 def sector_leaders(market, chips, today, ind_map, top_n=5, leaders=3, min_value=1e8):
-    """漲最多的前 N 個類股，每個類股附上當天漲最多的幾檔（成交金額 ≥ 1 億）"""
+    """漲最多的前 N 個類股（只列真的有上漲的），每個類股附上當天漲最多的幾檔（成交金額 ≥ 1 億）"""
     if not market or not market["sectors"]:
         return []
+    market = dict(market, sectors=[s for s in market["sectors"] if s["pct"] > 0])
     days = sorted(d for d in chips["date"].unique() if d <= pd.Timestamp(today.date()))
     if len(days) < 2:
         return [dict(s, leaders=[]) for s in market["sectors"][:top_n]]

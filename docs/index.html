@@ -46,7 +46,10 @@ function allSectors(list) {
 }
 
 function sectorBlock(list, all) {
-  if (!list || !list.length) return '';
+  list = (list || []).filter(s => s.pct > 0);          // 只列真的有上漲的族群
+  if (!list.length) {
+    return all && all.length ? `<section><h2>今天哪些族群在漲</h2><div class="empty">今天幾乎全面下跌，沒有上漲的族群。</div>${allSectors(all)}</section>` : '';
+  }
   const max = Math.max(...list.map(s => Math.abs(s.pct)), 0.5);
   return `<section><h2>今天哪些族群在漲</h2><p class="sub">只是幫你看懂市場，不是買進訊號。</p><ul class="sectors num">` +
     list.map(s => `<li><span>${esc(s.name)}</span><span class="bar"><i style="width:${Math.abs(s.pct) / max * 100}%;background:var(--${s.pct >= 0 ? 'up' : 'down'})"></i></span><span class="pct ${cls(s.pct)}">${pctText(s.pct, 2)}</span>` +
