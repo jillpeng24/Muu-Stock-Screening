@@ -1,10 +1,7 @@
 name: 每日選股
 
 on:
-  schedule:
-    # 台北時間 14:32（週一至週五）。GitHub 免費排程常會延遲。
-    # 如果啟動時證交所資料還沒公布，程式會每 10 分鐘再檢查一次，最多等到 17:00。
-    - cron: '32 6 * * 1-5'
+  # 由 Google Apps Script 每個交易日約 16:30 觸發（GitHub 免費排程常延遲，所以不用）
   workflow_dispatch:
     inputs:
       dry_run:
