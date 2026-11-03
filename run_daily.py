@@ -1,6 +1,6 @@
 """
 每日主程式：抓資料 → 大盤燈號 → 選股 → 紀錄 → LINE 群發
-排程每個交易日 14:32 觸發一次；資料還沒公布會每 10 分鐘重試，最多到 17:00。當天已經產生過報告就直接結束。
+每個交易日由 Google Apps Script 約 16:30 觸發；資料還沒公布會每 10 分鐘重試，最多到 17:30。當天已經產生過報告就直接結束。
 用法：
   python run_daily.py              正常執行
   DRY_RUN=1 python run_daily.py    只預覽 LINE 訊息，不發送
@@ -37,8 +37,8 @@ def main():
 
     print("\n① 更新法人與行情資料")
     chips, has_today = data_twse.update_chips(today)
-    # 資料還沒公布：每 10 分鐘再檢查一次，最多等到 17:00
-    while not has_today and not os.environ.get("TODAY") and datetime.now(TW).hour < 17:
+    # 資料還沒公布：每 10 分鐘再檢查一次，最多等到 17:30
+    while not has_today and not os.environ.get("TODAY") and (datetime.now(TW).hour, datetime.now(TW).minute) < (17, 30):
         print(f"⏳ {datetime.now(TW):%H:%M} 證交所今天的資料還沒公布，10 分鐘後再試…")
         time.sleep(600)
         chips, has_today = data_twse.update_chips(today)
