@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Muu 今日選股</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="wrap" id="app"><p class="muted" style="margin-top:40px">載入中…</p></div>
+<script src="assets/common.js"></script>
+<script>
+const LIGHT = {
+  green: {cls: 'g', title: '綠燈：可以正常買', sub: '今天推薦的股票，照平常的金額買。'},
+  yellow: {cls: 'y', title: '黃燈：台股轉弱', sub: '今天推薦的股票，買進金額先減半。'},
+  red: {cls: 'r', title: '紅燈：先不要買新股票', sub: '台股、美股都轉弱。已經買的照原本的日期抱著，新的先觀察。'},
+};
+
+function lightBlock(L) {
+  const s = LIGHT[L.light] || LIGHT.green;
+  const tw = L.tw_close != null ? `0050 上週收盤 <span class="num">${fmt(L.tw_close, 2)}</span>，${L.tw_close > L.tw_ma20w ? '在' : '跌破'} 20 週均線 <span class="num">${fmt(L.tw_ma20w, 2)}</span>${L.tw_close > L.tw_ma20w ? '之上' : ''}` : '';
+  const us = L.us_close != null ? `美股 S&amp;P 500 ${L.us_close > L.us_ma200 ? '還在' : '跌破'} 200 日均線${L.us_close > L.us_ma200 ? '之上' : ''}` : '';
+  return `<div class="signal" role="status" aria-label="大盤燈號：${s.title}">
+    <div class="lamps" aria-hidden="true">${['g', 'y', 'r'].map(c => `<span class="lamp ${c}${c === s.cls ? ' on' : ''}"></span>`).join('')}</div>
+    <h2>${s.title}</h2><p>${s.sub}</p>
+    <div class="why"><b>為什麼？</b>${[tw, us].filter(Boolean).join('；')}。</div></div>`;
+}
+
+function marketBlock(m) {
+  if (!m || m.taiex == null) return '';
+  return `<section><h2>大盤速覽</h2><div class="quick num">
+    <div><small>加權指數</small><strong>${fmt(m.taiex, 0)}</strong></div>
+    <div><small>今日漲跌</small><strong class="${cls(m.taiex_pct)}">${pctText(m.taiex_pct, 2)}</strong></div>
+    <div><small>成交金額</small><strong>${m.value ? fmt(m.value / 1e8, 0) + ' 億' : '—'}</strong></div>
+  </div>${m.up != null ? `<p class="sub" style="margin-top:8px">上漲 <span class="up num">${m.up}</span> 家、下跌 <span class="down num">${m.down}</span> 家</p>` : ''}</section>`;
+}
+
+function allSectors(list) {
+  if (!list || !list.length) return '';
+  const max = Math.max(...list.map(s => Math.abs(s.pct)), 0.5);
+  return `<details class="grp" style="margin-top:10px"><summary><span class="t">看全部 ${list.length} 個族群</span><span class="n">依漲跌排列</span></summary><ul class="sectors num" style="padding:0 16px 10px">` +
+    list.map(s => `<li><span>${esc(s.name)}</span><span class="bar"><i style="width:${Math.abs(s.pct) / max * 100}%;background:var(--${s.pct >= 0 ? 'up' : 'down'})"></i></span><span class="pct ${cls(s.pct)}">${pctText(s.pct, 2)}</span></li>`).join('') + `</ul></details>`;
+}
+
+function sectorBlock(list, all) {
+  if (!list || !list.length) return '';
+  const max = Math.max(...list.map(s => Math.abs(s.pct)), 0.5);
+  return `<section><h2>今天哪些族群在漲</h2><p class="sub">只是幫你看懂市場，不是買進訊號。</p><ul class="sectors num">` +
+    list.map(s => `<li><span>${esc(s.name)}</span><span class="bar"><i style="width:${Math.abs(s.pct) / max * 100}%;background:var(--${s.pct >= 0 ? 'up' : 'down'})"></i></span><span class="pct ${cls(s.pct)}">${pctText(s.pct, 2)}</span>` +
+      (s.leaders && s.leaders.length ? `<span class="lead">領漲：${s.leaders.map(l => `<a href="stock.html?id=${l.id}">${esc(l.name)}</a> <span class="${cls(l.pct)}">${pctText(l.pct)}</span>`).join('、')}</span>` : '') + `</li>`).join('') + `</ul>${allSectors(all)}</section>`;
+}
+
+function pickCard(p, i, red) {
+  const plan = red
+    ? `<div><span class="k">明天</span><span>先觀察，不要買</span></div>`
+    : `<div><span class="k">明天</span><span>可以買${p.size_label ? '，' + p.size_label : ''}</span></div><div><span class="k">抱到</span><span class="num">${p.review} 左右再檢視</span></div>`;
+  const tags = [`投信連買 ${p.trust_days} 天`, `近 5 日買超佔量 ${Math.round(p.trust5)}%`];
+  const indTag = p.industry ? `<span class="tag ind${p.hot ? ' hot' : ''}">${p.hot ? '🔥 ' : ''}${esc(p.industry)}</span>` : '';
+  if (p.foreign_together) tags.push(`外資同步買 ${p.foreign_days} 天`);
+  if (p.rev_yoy != null) tags.push(`${p.rev_label ? p.rev_label.replace('月', ' 月') : ''}營收${p.rev_yoy >= 0 ? '年增' : '年減'} ${Math.abs(Math.round(p.rev_yoy))}%`);
+  const warns = [];
+  if (!red && p.swing) warns.push(`⚠️ 一個月內高低差約 ${Math.round(p.swing * 100)}%，跌了先別慌`);
+  if (p.margin_warn) warns.push(`⚠️ 融資偏高（${Math.round(p.margin)}%），震盪較大`);
+  return `<li class="pick"><a class="top" href="stock.html?id=${p.id}"><div class="row1"><span class="rank">${i + 1}</span><span class="name">${esc(p.name)}</span><span class="code num">${p.id}</span>${p.strong ? '<span class="star" title="投信買超特別多">⭐</span>' : ''}
+    <span class="price num"><b>${fmtPrice(p.close)}</b><span class="${cls(p.chg)}">${pctText(p.chg)}</span></span></div></a>
+    <div class="plan">${plan}</div><div class="tags num">${indTag}${tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
+    ${warns.length ? `<div class="warn">${warns.map(w => `<p>${w}</p>`).join('')}</div>` : '<div style="height:14px"></div>'}</li>`;
+}
+
+function watchBlock(groups) {
+  if (!groups || !groups.length) return '';
+  return `<section><h2>觀察名單：為什麼沒推薦</h2><p class="sub">投信也有在買，但卡在某一條規則。看原因，練習判斷什麼股票先別碰。</p>` +
+    groups.map((g, gi) => `<details class="grp"${gi === 0 ? ' open' : ''}><summary><span class="t">${esc(g.title)}</span><span class="n num">${g.items.length} 檔</span></summary>
+      <p class="lesson">${esc(g.lesson)}</p><ul class="num">${g.items.map(it => `<li><a href="stock.html?id=${it.id}" title="${esc(it.reason)}">${esc(it.name)}${it.rank && (g.key === 'near' || g.key === 'weak') ? ` <small>第 ${it.rank}</small>` : ''}</a></li>`).join('')}</ul></details>`).join('') + `</section>`;
+}
+
+(async () => {
+  const app = document.getElementById('app');
+  try {
+    const idx = await getJSON('data/index.json');
+    const want = new URLSearchParams(location.search).get('d');
+    const date = idx.dates.some(d => d.date === want) ? want : idx.latest;
+    const day = await getJSON(`data/days/${date}.json`);
+    const red = day.light.light === 'red';
+    const options = idx.dates.map(d => `<option value="${d.date}"${d.date === date ? ' selected' : ''}>${mdw(d.date)}${d.official ? '' : ' 預覽'}</option>`).join('');
+    app.innerHTML = `<header class="top"><h1>今日選股</h1>
+        <label><span class="muted" style="font-size:14px">日期 </span><select class="datepick num" id="pick">${options}</select></label></header>
+      ${day.official ? '' : '<p><span class="preview">這天是預覽模式產生的，沒有發 LINE</span></p>'}
+      ${lightBlock(day.light)}${marketBlock(day.market)}${sectorBlock(day.sectors, day.all_sectors)}
+      <section><h2>今天推薦 ${day.picks.length} 檔</h2>
+        <p class="sub">${red ? '紅燈期間只觀察，不買新的。' : '明天收盤附近買，每檔金額一樣，抱到檢視日再決定。'}點股票看走勢。</p>
+        ${day.picks.length ? `<ol class="picks">${day.picks.map((p, i) => pickCard(p, i, red)).join('')}</ol>` : '<div class="empty">今天沒有符合條件的股票。</div>'}
+        ${day.picks.some(p => p.strong) ? '<p class="sub">⭐ 投信買超特別多（近 5 日佔成交量 14% 以上，或連買 10 天以上）</p>' : ''}
+        ${day.picks.some(p => p.hot) ? '<p class="sub">🔥 所屬族群是今天漲幅前 5 名</p>' : ''}
+      </section>
+      ${watchBlock(day.watch)}
+      <footer>僅供參考，請自行判斷。資料：證交所、FinMind、Yahoo。</footer>`;
+    document.getElementById('pick').addEventListener('change', e => { location.search = '?d=' + e.target.value; });
+  } catch (e) {
+    app.innerHTML = `<div class="empty" style="margin-top:40px">資料讀取失敗：${esc(e.message)}。<br>如果是在自己電腦上測試，請用「本機測試」的指令打開，不要直接點兩下 HTML 檔。</div>`;
+  }
+  renderNav('index');
+})();
+</script>
+</body>
+</html>

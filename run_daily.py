@@ -12,7 +12,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from core import config, data_twse, market, notify, screener, tracker
+from core import config, data_twse, market, market_summary, notify, screener, site, tracker
 
 TW = timezone(timedelta(hours=8))
 
@@ -81,6 +81,17 @@ def main():
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=1, default=str)
     print(f"\n💾 報告已存：{report_path}")
+
+    print("\n⑦ 更新網站資料")
+    try:                                              # 網站出錯不影響選股與 LINE
+        mk = market_summary.fetch_market(today)
+        ind = market_summary.industry_map(today)
+        sectors = market_summary.sector_leaders(mk, chips, today, ind)
+        mk_brief = {k: v for k, v in (mk or {}).items() if k != "sectors"} or None
+        site.build(today, light, picks, chips, trades, mk_brief, sectors, official=not config.DRY_RUN, ind_map=ind,
+                   all_sectors=(mk or {}).get("sectors"))
+    except Exception as e:
+        print(f"   ⚠️ 網站資料更新失敗（不影響選股）：{e}")
 
 
 if __name__ == "__main__":

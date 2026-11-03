@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>個股｜Muu 選股</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body class="wide">
+<div class="wrap" id="app"><p class="muted" style="margin-top:40px">載入中…</p></div>
+<script src="assets/common.js"></script>
+<script>
+const UP = '#C23B2E', DOWN = '#2F7D4F', INK = '#2D2721', MUTED = '#76695A', LINE = '#D8C9AD';
+const MA_COLORS = {5: '#E08A3C', 10: '#8C6BB1', 20: '#2E4A6B'};
+const STATUS = {top: '當天推薦', watch: '觀察名單'};
+
+function ma(rows, n) {
+  const out = [];
+  let sum = 0;
+  rows.forEach((r, i) => {
+    sum += r.close;
+    if (i >= n) sum -= rows[i - n].close;
+    if (i >= n - 1) out.push({time: r.time, value: +(sum / n).toFixed(2)});
+  });
+  return out;
+}
+
+function toWeekly(rows) {
+  const out = [];
+  for (const r of rows) {
+    const d = new Date(r.time + 'T00:00:00Z');
+    const monday = new Date(d); monday.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    const key = monday.toISOString().slice(0, 10);
+    const last = out[out.length - 1];
+    if (last && last.key === key) {
+      last.high = Math.max(last.high, r.high); last.low = Math.min(last.low, r.low);
+      last.close = r.close; last.volume += r.volume;
+    } else out.push({key, time: key, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume});
+  }
+  return out;
+}
+
+function toMonthly(rows) {
+  const out = [];
+  for (const r of rows) {
+    const key = r.time.slice(0, 7) + '-01';
+    const last = out[out.length - 1];
+    if (last && last.time === key) {
+      last.high = Math.max(last.high, r.high); last.low = Math.min(last.low, r.low);
+      last.close = r.close; last.volume += r.volume;
+    } else out.push({time: key, open: r.open, high: r.high, low: r.low, close: r.close, volume: r.volume});
+  }
+  return out;
+}
+
+// 推薦日 → 隔一個交易日買 → 再 20 個交易日（用 K 線的交易日計算，未來的日子用平日估算）
+function tradingDayAfter(days, from, n) {
+  const i = days.indexOf(from);
+  if (i >= 0 && i + n < days.length) return days[i + n];
+  let d = new Date((i >= 0 ? days[days.length - 1] : from) + 'T00:00:00Z');
+  let left = i >= 0 ? n - (days.length - 1 - i) : n;
+  while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() % 6) left--; }
+  return d.toISOString().slice(0, 10);
+}
+
+function chartOpts(el, h) {
+  return {
+    width: el.clientWidth, height: h,
+    layout: {background: {color: 'transparent'}, textColor: MUTED, fontFamily: 'Noto Sans TC, sans-serif'},
+    grid: {vertLines: {color: 'rgba(216,201,173,.35)'}, horzLines: {color: 'rgba(216,201,173,.35)'}},
+    rightPriceScale: {borderColor: LINE}, timeScale: {borderColor: LINE},
+    localization: {locale: 'zh-TW', dateFormat: 'yyyy/MM/dd'},
+    handleScroll: {vertTouchDrag: false},
+  };
+}
+
+function drawPrice(el, rows, markers) {
+  el.innerHTML = '';
+  const chart = LightweightCharts.createChart(el, chartOpts(el, el.clientHeight));
+  const candle = chart.addCandlestickSeries({upColor: UP, downColor: DOWN, borderUpColor: UP, borderDownColor: DOWN, wickUpColor: UP, wickDownColor: DOWN});
+  candle.setData(rows.map(({time, open, high, low, close}) => ({time, open, high, low, close})));
+  for (const n of [5, 10, 20]) chart.addLineSeries({color: MA_COLORS[n], lineWidth: n === 20 ? 2 : 1, priceLineVisible: false, lastValueVisible: false}).setData(ma(rows, n));
+  const vol = chart.addHistogramSeries({priceScaleId: '', priceFormat: {type: 'volume'}, lastValueVisible: false, priceLineVisible: false});
+  vol.priceScale().applyOptions({scaleMargins: {top: 0.8, bottom: 0}});
+  vol.setData(rows.map(r => ({time: r.time, value: r.volume, color: r.close >= r.open ? 'rgba(194,59,46,.28)' : 'rgba(47,125,79,.28)'})));
+  if (markers && markers.length) candle.setMarkers(markers);
+  chart.timeScale().setVisibleLogicalRange({from: Math.max(0, rows.length - 90), to: rows.length + 2});
+  new ResizeObserver(() => chart.applyOptions({width: el.clientWidth})).observe(el);
+}
+
+// 投信、外資買賣超：每日／累積／近 5 日佔成交量
+function flowSeries(flows, mode) {
+  const lots = x => Math.round(x / 1000);
+  if (mode === 'cum') {
+    let t = 0, f = 0;
+    return flows.map(([d, tr, fo]) => { t += tr; f += fo; return {time: d, trust: lots(t), foreign: lots(f)}; });
+  }
+  if (mode === 'ratio') {
+    const out = [];
+    for (let i = 4; i < flows.length; i++) {
+      const w = flows.slice(i - 4, i + 1), vol = w.reduce((a, x) => a + (x[3] || 0), 0);
+      if (!vol) continue;
+      out.push({time: flows[i][0], trust: +(w.reduce((a, x) => a + x[1], 0) / vol * 100).toFixed(1),
+                foreign: +(w.reduce((a, x) => a + x[2], 0) / vol * 100).toFixed(1)});
+    }
+    return out;
+  }
+  return flows.map(([d, tr, fo]) => ({time: d, trust: lots(tr), foreign: lots(fo)}));
+}
+
+function drawFlows(el, flows, mode) {
+  el.innerHTML = '';
+  const chart = LightweightCharts.createChart(el, chartOpts(el, el.clientHeight));
+  const data = flowSeries(flows, mode);
+  if (mode === 'daily') {
+    chart.addHistogramSeries({priceFormat: {type: 'volume'}, priceLineVisible: false})
+      .setData(data.map(x => ({time: x.time, value: x.trust, color: x.trust >= 0 ? UP : DOWN})));
+  } else {
+    const fmtv = mode === 'ratio' ? {type: 'custom', formatter: v => v.toFixed(1) + '%'} : {type: 'volume'};
+    const trust = chart.addAreaSeries({lineColor: UP, topColor: 'rgba(194,59,46,.25)', bottomColor: 'rgba(194,59,46,.02)', lineWidth: 2, priceFormat: fmtv, priceLineVisible: false});
+    trust.setData(data.map(x => ({time: x.time, value: x.trust})));
+    if (mode === 'ratio') trust.createPriceLine({price: 14, color: '#B8862A', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '⭐ 14%'});
+  }
+  chart.addLineSeries({color: MUTED, lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false})
+    .setData(data.map(x => ({time: x.time, value: x.foreign})));
+  chart.timeScale().fitContent();
+  new ResizeObserver(() => chart.applyOptions({width: el.clientWidth})).observe(el);
+}
+
+function flowSummary(flows) {
+  let streak = 0;
+  for (let i = flows.length - 1; i >= 0 && flows[i][1] > 0; i--) streak++;
+  const w = flows.slice(-5), vol = w.reduce((a, x) => a + (x[3] || 0), 0), net = w.reduce((a, x) => a + x[1], 0);
+  const ratio = vol ? net / vol * 100 : null;
+  const star = streak >= 10 || (ratio != null && ratio >= 14);
+  return `<p class="flowsum num">投信${streak ? `連買 <b>${streak}</b> 天` : '最近沒有連買'}｜近 5 日${net >= 0 ? '買超' : '賣超'} <b>${fmt(Math.abs(net) / 1000, 0)} 張</b>${ratio != null ? `，佔成交量 <b class="${cls(ratio)}">${ratio.toFixed(0)}%</b>` : ''}${star ? ' ⭐' : ''}</p>`;
+}
+
+const FLOW_NOTE = {
+  daily: '紅柱＝投信買超、綠柱＝賣超（張）；虛線是外資。',
+  cum: '從圖最左邊開始，投信一路買賣加起來（張）。線往上＝越買越多，往下彎＝開始賣；虛線是外資。',
+  ratio: '每天的「近 5 日買超佔成交量」。超過 14% 的虛線就是 ⭐ 的門檻；虛線是外資。',
+};
+
+function biasBlock(rows, latestBias) {
+  const m20 = ma(rows, 20);
+  if (!m20.length) return '';
+  const last = rows[rows.length - 1];
+  const bias = latestBias != null ? latestBias * 100 : (last.close / m20[m20.length - 1].value - 1) * 100;
+  const lo = -15, hi = 25, pos = v => Math.min(100, Math.max(0, (v - lo) / (hi - lo) * 100));
+  const over = bias > 10;
+  return `<section><h2>有沒有追高？</h2><div class="card">
+    <p style="margin:0">離 20 日均線 <b class="num ${over ? 'up' : ''}">${pctText(bias)}</b>，${over ? '超過 10%，漲太快了，等回檔再說。' : bias < 0 ? '在均線下方，沒有追高的問題。' : '在 10% 以內，不算追高。'}</p>
+    <div class="meter" aria-hidden="true"><b style="width:${pos(10)}%;background:rgba(47,125,79,.25)"></b><i style="left:${pos(bias)}%"></i></div>
+    <div class="legend num" style="justify-content:space-between"><span>−15%</span><span style="margin-left:${pos(10) - 50}%">+10% 追高線</span><span>+25%</span></div>
+    <p class="muted" style="font-size:14px;margin:6px 0 0">測試中，離均線超過 10% 才買的股票，有一半中途跌超過 10%。</p></div></section>`;
+}
+
+function planBlock(trades, rows, swing) {
+  const t = [...trades].sort((a, b) => b.signal_date.localeCompare(a.signal_date))[0];
+  if (!t) return '';
+  const days = rows.map(r => r.time);
+  const entry = t.entry_date, last = rows[rows.length - 1];
+  const review = entry ? tradingDayAfter(days, entry, 20) : tradingDayAfter(days, t.signal_date, 21);
+  let body = `<dl class="kv num"><dt>推薦日</dt><dd>${mdw(t.signal_date)}</dd>`;
+  if (t.status === 'pending') {
+    body += `<dt>狀態</dt><dd>等明天收盤買進</dd><dt>預計檢視</dt><dd>${md(review)} 左右</dd></dl>`;
+  } else {
+    const endPx = t.status === 'closed' ? t.exit_price : last.close;
+    const ret = t.status === 'closed' && t.ret != null ? t.ret * 100 : (endPx / t.entry_price - 1) * 100;
+    const held = rows.filter(r => r.time >= entry && (t.status !== 'closed' || r.time <= t.exit_date));
+    const minLow = Math.min(...held.map(r => r.low));
+    const dd = (minLow / t.entry_price - 1) * 100;
+    body += `<dt>買進</dt><dd>${mdw(entry)}　${fmtPrice(t.entry_price)} 元</dd>
+      <dt>${t.status === 'closed' ? '賣出' : '檢視日'}</dt><dd>${t.status === 'closed' ? `${mdw(t.exit_date)}　${fmtPrice(t.exit_price)} 元` : `${md(review)} 左右`}</dd>
+      <dt>${t.status === 'closed' ? '報酬' : '目前報酬'}</dt><dd class="${cls(ret)}">${pctText(ret)}${t.status === 'closed' && t.bench_ret != null ? `<span class="muted">（0050 同期 ${pctText(t.bench_ret * 100)}）</span>` : ''}</dd>
+      <dt>中途最深</dt><dd class="${cls(dd)}">${pctText(dd)}</dd></dl>`;
+    if (swing && dd < 0) {
+      const ok = -dd < swing * 100;
+      body += `<p style="margin:10px 0 0;font-size:15px">${ok
+        ? `這檔股票平常一個月高低差約 ${Math.round(swing * 100)}%，目前的回檔<b>還在正常範圍內</b>。`
+        : `回檔已經超過平常一個月約 ${Math.round(swing * 100)}% 的震盪幅度，比較少見。規則上還是抱到檢視日，但可以多留意消息。`}</p>`;
+    }
+  }
+  return `<section><h2>${t.status === 'closed' ? '推薦回顧' : '持有計畫'}</h2><p class="sub">模擬帳戶照規則買賣：推薦隔天收盤買，抱 20 個交易日。</p><div class="card">${body}</div></section>`;
+}
+
+function historyBlock(hist) {
+  if (!hist || !hist.length) return '';
+  const recent = hist.slice(-12).reverse();
+  return `<section><h2>出現在名單的紀錄</h2><p class="sub">投信有在買的日子，系統怎麼判斷這檔股票。</p><div class="card"><ul class="histlist">` +
+    recent.map(h => `<li><span class="d num">${md(h.date)}</span><span>${h.status === 'top' ? '<b>推薦</b>' : esc(STATUS[h.status] || h.status)}${h.reason ? `<span class="muted">：${esc(h.reason)}</span>` : ''}</span></li>`).join('') +
+    `</ul></div></section>`;
+}
+
+function fundBlock(f) {
+  if (!f) return '';
+  const eps = f.eps4 ? f.eps4.map(v => `<span class="${v > 0 ? '' : 'down'}">${fmt(v, 2)}</span>`).join('、') : '—';
+  return `<section><h2>公司體質</h2><div class="card"><dl class="kv num">
+    <dt>${f.rev_label || '最新'}營收</dt><dd>${f.rev_yoy == null ? '—' : `<span class="${cls(f.rev_yoy)}">${f.rev_yoy >= 0 ? '年增' : '年減'} ${Math.abs(Math.round(f.rev_yoy))}%</span>`}</dd>
+    <dt>近 4 季 EPS</dt><dd>${eps}</dd>
+    <dt>營業現金流</dt><dd>${f.cf_ttm == null ? '—' : (f.cf_ttm > 0 ? '近 4 季合計為正' : '<span class="down">近 4 季合計為負</span>')}</dd>
+  </dl></div></section>`;
+}
+
+(async () => {
+  const app = document.getElementById('app');
+  const id = new URLSearchParams(location.search).get('id') || '';
+  try {
+    if (!/^\d{4}$/.test(id)) throw new Error('缺少股票代號');
+    const s = await getJSON(`data/stocks/${id}.json`);
+    document.title = `${s.name} ${s.id}｜Muu 選股`;
+    const rows = s.ohlcv.map(([time, open, high, low, close, volume]) => ({time, open, high, low, close, volume}));
+    const last = rows[rows.length - 1], prev = rows[rows.length - 2];
+    const chg = prev ? (last.close / prev.close - 1) * 100 : null;
+    const st = s.latest && s.latest.status;
+    const markers = [];
+    for (const t of s.trades || []) {
+      if (t.entry_date) markers.push({time: t.entry_date, position: 'belowBar', color: INK, shape: 'arrowUp', text: '買'});
+      if (t.exit_date) markers.push({time: t.exit_date, position: 'aboveBar', color: INK, shape: 'arrowDown', text: '檢視'});
+    }
+    markers.sort((a, b) => a.time.localeCompare(b.time));
+
+    app.innerHTML = `<a class="back" href="javascript:history.length>1?history.back():location.href='index.html'">← 回今日選股</a>
+      <div class="stockhead"><h1>${esc(s.name)}</h1><span class="code num">${s.id}</span>${s.industry ? `<span class="tag ind">${esc(s.industry)}</span>` : ''}</div>
+      <div class="num"><span class="bigprice">${fmtPrice(last.close)}</span> <span class="${cls(chg)}">${pctText(chg, 2)}</span>
+        <span class="muted" style="font-size:14px">　${md(last.time)} 收盤</span></div>
+      ${st ? `<p style="margin:6px 0 0"><span class="tag">${STATUS[st] || st}${s.latest.reason ? '：' + esc(s.latest.reason) : ''}</span></p>` : ''}
+      <section><div class="tabs-inline" role="group" aria-label="K 線週期" id="ktabs"><button aria-pressed="true" data-p="d">日K</button><button aria-pressed="false" data-p="w">週K</button><button aria-pressed="false" data-p="m">月K</button></div>
+        <div class="chartbox"><div class="chart" id="price"></div>
+        <div class="legend"><span><i style="background:${MA_COLORS[5]}"></i>5 日線</span><span><i style="background:${MA_COLORS[10]}"></i>10 日線</span><span><i style="background:${MA_COLORS[20]};height:4px"></i>20 日線</span><span>紅漲綠跌</span></div></div></section>
+      ${s.flows && s.flows.length ? `<section><h2>投信買多少</h2>${flowSummary(s.flows)}
+        <div class="tabs-inline" role="group" aria-label="投信買賣超看法" id="ftabs"><button aria-pressed="true" data-f="daily">每日</button><button aria-pressed="false" data-f="cum">累積</button><button aria-pressed="false" data-f="ratio">近 5 日佔量</button></div>
+        <p class="sub" id="fnote">${FLOW_NOTE.daily}</p><div class="chartbox"><div class="chart small" id="flows"></div></div></section>` : ''}
+      ${biasBlock(rows, s.latest && s.latest.bias)}
+      ${planBlock(s.trades || [], rows, s.latest && s.latest.swing)}
+      ${historyBlock(s.history)}
+      ${fundBlock(s.fund)}
+      <section><h2>看更多</h2><div class="links">
+        <a class="btn" href="${LINKS.yahoo(s.id)}" target="_blank" rel="noopener">盤中走勢（Yahoo 股市）</a>
+        ${LINKS.warroom ? `<a class="btn" href="${LINKS.warroom}?stock=${s.id}" target="_blank" rel="noopener">個股戰情室</a>` : ''}
+        <a class="btn" href="${LINKS.wantgoo(s.id)}" target="_blank" rel="noopener">玩股網</a></div></section>
+      <footer>僅供參考，請自行判斷。</footer>`;
+
+    const el = document.getElementById('price');
+    drawPrice(el, rows, markers);
+    const monthly = s.ohlcv_m && s.ohlcv_m.length >= 6
+      ? s.ohlcv_m.map(([time, open, high, low, close, volume]) => ({time, open, high, low, close, volume})) : toMonthly(rows);
+    const kbtns = app.querySelectorAll('#ktabs button');
+    kbtns.forEach(b => b.addEventListener('click', () => {
+      kbtns.forEach(x => x.setAttribute('aria-pressed', x === b));
+      const p = b.dataset.p;
+      drawPrice(el, p === 'w' ? toWeekly(rows) : p === 'm' ? monthly : rows, p === 'd' ? markers : []);
+    }));
+    if (s.flows && s.flows.length) {
+      const fel = document.getElementById('flows'), fbtns = app.querySelectorAll('#ftabs button');
+      drawFlows(fel, s.flows, 'daily');
+      fbtns.forEach(b => b.addEventListener('click', () => {
+        fbtns.forEach(x => x.setAttribute('aria-pressed', x === b));
+        document.getElementById('fnote').textContent = FLOW_NOTE[b.dataset.f];
+        drawFlows(fel, s.flows, b.dataset.f);
+      }));
+    }
+  } catch (e) {
+    app.innerHTML = `<a class="back" href="index.html">← 回今日選股</a><div class="empty" style="margin-top:16px">找不到這檔股票的資料（${esc(e.message)}）。<br>目前只有出現在推薦或觀察名單的股票才有個股頁。</div>`;
+  }
+  renderNav('');
+})();
+</script>
+</body>
+</html>
